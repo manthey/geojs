@@ -14,6 +14,8 @@ def generate_baselines(args):
 
     :param args: a dictionary of arguments, including:
         xvfb: if True, run ci-xvfb instead of ci.
+        make: if "existing", use existing images to create the tarball rather
+            than running ci or ci-xvfb.
         build: the build directory; created if it does not exist.
         verbose: the verbosity level.
     """
@@ -29,10 +31,11 @@ def generate_baselines(args):
     tarPath = os.path.join(buildPath, tarName)
     if os.path.exists(tarPath):
         os.unlink(tarPath)
-    cmd = ['npm', 'run', 'ci-xvfb' if args.get('xvfb') else 'ci']
-    if args['verbose'] >= 1:
-        print('Generating baselines: %s' % subprocess.list2cmdline(cmd))
-    subprocess.check_call(cmd)
+    if args['make'] != 'existing':
+        cmd = ['npm', 'run', 'ci-xvfb' if args.get('xvfb') else 'ci']
+        if args['verbose'] >= 1:
+            print('Generating baselines: %s' % subprocess.list2cmdline(cmd))
+        subprocess.check_call(cmd)
     os.chdir(buildPath)
     cmd = ['bash', '-c',
            "find images -name '*.png' -a -not -name '*-test.png' -a -not "
@@ -53,7 +56,7 @@ def generate_baselines(args):
     os.chdir(cwd)
     if args.get('copy'):
         name = 'Baseline Images %s.tgz' % time.strftime(
-            '%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(tarPath)))
+            '%Y-%m-%d %H-%M-%S', time.localtime(os.path.getmtime(tarPath)))
         copiedTarPath = os.path.join(buildPath, name)
         shutil.copy2(tarPath, copiedTarPath)
         if args['verbose'] >= 1:
@@ -124,6 +127,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--no-generate', dest='make', action='store_false',
         help='Do not generate baseline images.')
+    parser.add_argument(
+        '--existing-images', '-e', dest='make', action='store_const',
+        const='existing', help='Create a baseline file from existing images.')
     parser.add_argument(
         '--build', '-b', default='.',
         help='The build directory.  This is created if baseline images are '
