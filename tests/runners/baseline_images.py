@@ -10,10 +10,10 @@ import time
 
 def generate_baselines(args):
     """
-    Generate baseline image tarball by running ctest in the build directory.
+    Generate baseline image tarball.
 
     :param args: a dictionary of arguments, including:
-        xvfb: if True, run ctest within xvfb-run.
+        xvfb: if True, run ci-xvfb instead of ci.
         build: the build directory; created if it does not exist.
         verbose: the verbosity level.
     """
@@ -25,27 +25,32 @@ def generate_baselines(args):
         os.makedirs(buildPath)
     if not os.path.isdir(buildPath):
         raise Exception('build path is not a directory')
-    os.chdir(buildPath)
-    if not os.path.exists(os.path.join(buildPath, 'CMakeFiles')):
-        cmd = ['cmake', cwd]
-        if args['verbose'] >= 1:
-            print('Running cmake: %s' % subprocess.list2cmdline(cmd))
-        subprocess.check_call(cmd)
-    tarPath = os.path.join(buildPath, 'base-images.tgz')
+    tarName = 'base-images.tgz'
+    tarPath = os.path.join(buildPath, tarName)
     if os.path.exists(tarPath):
         os.unlink(tarPath)
-    cmd = ['ctest', '-C', 'baseline_images', '-R', 'baseline_images',
-           '--output-on-failure']
-    if args.get('xvfb'):
-        cmd = ['xvfb-run', '-s', '-ac -screen 0 1280x1024x24', 'bash', '-c',
-               subprocess.list2cmdline(cmd)]
+    cmd = ['npm', 'run', 'ci-xvfb' if args.get('xvfb') else 'ci']
     if args['verbose'] >= 1:
-        print('Running ctest: %s' % subprocess.list2cmdline(cmd))
+        print('Generating baselines: %s' % subprocess.list2cmdline(cmd))
     subprocess.check_call(cmd)
-    os.chdir(cwd)
+    os.chdir(buildPath)
+    cmd = ['bash', '-c',
+           "find images -name '*.png' -a -not -name '*-test.png' -a -not "
+           "-name '*-diff.png' -a -not -name '*-base.png' -a -not "
+           "-name '*-screen.png' -print0 | xargs -0 -n 1 -P 8 optipng || true"]
+    if args['verbose'] >= 1:
+        print('Optimizing output: %s' % subprocess.list2cmdline(cmd))
+    subprocess.check_call(cmd)
+    cmd = ['tar', '-zcvf', tarPath, '--exclude=*-test.png',
+           '--exclude=*-diff.png', '--exclude=*-base.png',
+           '--exclude=*-screen.png', '-C', 'images', '.']
+    if args['verbose'] >= 1:
+        print('Making tar file: %s' % subprocess.list2cmdline(cmd))
+    subprocess.check_call(cmd)
     tarSize = os.path.getsize(tarPath)
     if args['verbose'] >= 1:
         print('Created baseline image tgz file, %d bytes' % tarSize)
+    os.chdir(cwd)
     if args.get('copy'):
         name = 'Baseline Images %s.tgz' % time.strftime(
             '%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(tarPath)))
@@ -88,11 +93,15 @@ def upload_baselines(args):
         stream=open(tarPath, 'rb'), size=tarSize, mimeType='application/tar+gzip')
     if args['verbose'] >= 1:
         print('Upload to file %s' % uploadedFile['_id'])
-    testDataPath = os.path.abspath('tests/external-data')
-    if not os.path.isdir(testDataPath):
+    testDataPath = os.path.abspath('scripts/datastore.js')
+    if not os.path.isfile(testDataPath):
         raise Exception('Cannot update test-data information.')
     sha512 = gc.getFile(uploadedFile['_id'])['sha512']
-    open(os.path.join(testDataPath, 'base-images.tgz.sha512'), 'w').write(sha512)
+    ds = open(testDataPath).read()
+    start, rest = ds.split("'base-images.tgz': ", 1)
+    rest, end = rest.split(',', 1)
+    ds = start + ("'base-images.tgz': '%s'," % sha512) + end
+    open(testDataPath, 'w').write(ds)
     if args['verbose'] >= 1:
         print('test-data references updated')
 
@@ -104,15 +113,14 @@ if __name__ == '__main__':
         'of the geojs repository.')
     parser.add_argument(
         '--xvfb', '-x', dest='xvfb', action='store_true',
-        help='Run xvfb-run when running ctest to generate the baseline '
-        'images.  Only applies if the images are generated.')
+        help='Run xvfb-run when generating the baseline images.  Only applies '
+        'if the images are generated.')
     parser.add_argument(
         '--no-xvfb', dest='xvfb', action='store_false',
         help='Do not use xvfb-run when generating baseline images.')
     parser.add_argument(
         '--generate', '-g', dest='make', action='store_true',
-        help='Generate baseline images by running "ctest -C baseline_images '
-        '-R baseline_images".')
+        help='Generate baseline images by running "npm ci".')
     parser.add_argument(
         '--no-generate', dest='make', action='store_false',
         help='Do not generate baseline images.')
